@@ -5,7 +5,7 @@ Install Etcd with Docker on Raspberry Pis / Systems supporting ARM architecture
 - Please make sure that Docker is installed
 
 # Install
-Use following in your `requrements.yml`
+Use following in your `requirements.yml`
 ```
 roles:
   - name: knorrkator.ansible-etcd
