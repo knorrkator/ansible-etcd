@@ -1,0 +1,14 @@
+- name: link systemd unit file
+  command: "systemctl link /etc/systemd/system/etcd-{{ knorrkator__etcd_cluster_name }}.service"
+  become: True
+
+- name: reload systemd
+  systemd:
+    daemon_reload: True
+  become: True
+
+- name: reload etcd
+  service:
+    name: "etcd-{{ knorrkator__etcd_cluster_name }}"
+    state: reloaded
+  become: True

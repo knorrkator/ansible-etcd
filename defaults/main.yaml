@@ -1,0 +1,12 @@
+---
+knorrkator__etcd_state: present
+knorrkator__etcd_cluster_name: ansible
+knorrkator__etcd_node_name: "{{ inventory_hostname }}"
+knorrkator__etcd_data_dir: "/usr/lib/etcd-docker/{{ knorrkator__etcd_cluster_name }}/data"
+# Port over which all nodes communicate with each other
+knorrkator__etcd_cluster_port: 2380
+# Port over which clients send requests to the cluster
+knorrkator__etcd_client_port: 2379
+knorrkator_etcd_dockerimage_name: etcd-docker:latest
+
+knorrkator__etcd_initial_cluster_token: 'docker-etcd-12344f'

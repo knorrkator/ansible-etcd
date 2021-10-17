@@ -1,0 +1,132 @@
+---
+- name: Prepare machine
+  block:
+    - name: "App folders"
+      file:
+        path: "{{ item.path }}"
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+        state: directory
+      with_items:
+        - path: /usr/lib/etcd-docker
+          owner: root # NOTE: because etcd will run inside a Scratch image, we do not need to care about permissions
+          group: root
+          mode: '0775'
+        - path: /usr/lib/etcd-docker/docker
+          owner: root
+          group: root
+          mode: '0775'
+        - path: "{{ knorrkator__etcd_data_dir }}"
+          owner: root
+          group: root
+          mode: '0775'
+      become: True
+
+    - name: Make sure Dockerfile exists
+      git:
+        repo: https://github.com/knorrkator/etcd-docker.git
+        dest: /usr/lib/etcd-docker/docker
+      become: True
+
+    - name: Make sure Dockerimage is build
+      command: 'docker build -t {{ knorrkator_etcd_dockerimage_name }}  -f /usr/lib/etcd-docker/docker/Dockerfile /usr/lib/etcd-docker/docker'
+      become: True
+
+    - name: Need to determine IPv4 address of all hosts
+      setup: {}
+      when: not ansible_default_ipv4.address is defined
+
+    - name: Declare parameter needed to launch etcd service
+      block:
+        - name: Define some facts
+          set_fact:
+            # Define host string for Etcd cluster
+            # E.g. will look like this: `etcd-raspi-1=http://192.168.178.112:2380`
+            knorrkator__etcd_cluster_node_hash: "etcd-{{ inventory_hostname }}=http://{{ ansible_default_ipv4.address }}:{{ knorrkator__etcd_cluster_port }}"
+            knorrkator__etcd_container_name: "etcd-{{ knorrkator__etcd_cluster_name }}"
+
+        - name: Define cluster parameter for Etcd
+          set_fact:
+            # Needed for `--initial-cluster` parameter
+            # E.g. will look like this: `etcd-raspi-1=http://192.168.178.112:2380,etcd-raspi-2=http://192.168.178.113:2380,etcd-raspi-3=http://192.168.178.125:2380`
+            knorrkator__etcd_initial_cluster_parameter: "{{ hostvars | json_query('*.knorrkator__etcd_cluster_node_hash') | join(',') }}"
+          run_once: True
+
+        - debug:
+            var: knorrkator__etcd_initial_cluster_parameter
+
+- name: Check if machine is set up properly
+  block:
+    - name: Run commands
+      command: "{{ item }}"
+      ignore_errors: True
+      register: knorrkator__etcd_check_machine_result
+
+      with_items:
+        - '/usr/bin/which docker'
+        - '/usr/bin/which systemctl'
+
+    - name: Exit with error
+      assert:
+        that:
+          - item.rc == 0
+      with_items: "{{ knorrkator__etcd_check_machine_result.results }}"
+
+    - name: Check if Docker container already exists
+      command: "docker ps -a -q -f name={{ knorrkator__etcd_container_name }}"
+      register: knorrkator_etcd_check_docker_container
+      become: True
+
+    - name: Set Flag if Docker container already exists
+      set_fact:
+        knorrkator__etcd_docker_container_exists: "{{ knorrkator_etcd_check_docker_container.stdout_lines | length == 1 }}"
+
+- name: Init Docker
+  block:
+      # NOTE: better would be https://docs.ansible.com/ansible/2.9/modules/docker_container_module.html
+      #       But I don't want this etcd Role to have any dependencies to Python packages
+    - name: Make sure Docker container can run
+      command: >
+        docker create -p 2379:{{  knorrkator__etcd_client_port }} -p 2380:{{ knorrkator__etcd_cluster_port }}
+        --mount type=bind,source={{ knorrkator__etcd_data_dir }},destination=/etcd-data \
+        --name {{ knorrkator__etcd_container_name }}
+        {{ knorrkator_etcd_dockerimage_name }} /usr/local/bin/etcd
+        --name etcd-{{ inventory_hostname }}
+        --data-dir=/etcd-data
+        --initial-advertise-peer-urls http://{{ ansible_default_ipv4.address }}:{{ knorrkator__etcd_cluster_port }}
+        --listen-peer-urls http://0.0.0.0:{{ knorrkator__etcd_cluster_port }}
+        --advertise-client-urls http://{{ ansible_default_ipv4.address }}:{{  knorrkator__etcd_client_port }}
+        --listen-client-urls http://0.0.0.0:{{  knorrkator__etcd_client_port }}
+        --initial-cluster-state new
+        --initial-cluster-token {{ knorrkator__etcd_initial_cluster_token }}
+        --initial-cluster {{ knorrkator__etcd_initial_cluster_parameter }}
+      become: True
+      when: knorrkator__etcd_docker_container_exists != True
+
+- name: Init Systemd
+  block:
+    - name: Make sure Systemd Unit file exists
+      template:
+        dest: "/etc/systemd/system/{{ knorrkator__etcd_container_name }}.service"
+        src: etc/systemd/system/etcd.service
+        owner: root
+        group: root
+        mode: 0770
+      become: True
+      vars:
+        etcd_cluster_name: "{{ knorrkator__etcd_cluster_name }}"
+      notify:
+        - link systemd unit file
+        - reload systemd
+        - reload etcd
+
+    - name: Flush handlers if Systemd Unit file has changed
+      meta: flush_handlers
+
+    - name: Make sure Etcd runs
+      service:
+        name: "{{ knorrkator__etcd_container_name }}"
+        enabled: True
+        state: started
+      become: True

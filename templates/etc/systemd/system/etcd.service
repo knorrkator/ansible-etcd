@@ -1,0 +1,14 @@
+[Unit]
+Description=Etcd service for Cluster named "{{ etcd_cluster_name }}"
+Requires=docker.service
+After=docker.service
+
+[Service]
+User=root
+Group=root
+Restart=always
+ExecStart=/usr/bin/docker start -a {{ knorrkator__etcd_container_name }}
+ExecStop=/usr/bin/docker stop -t 2 {{ knorrkator__etcd_container_name }}
+
+[Install]
+WantedBy=local.target
